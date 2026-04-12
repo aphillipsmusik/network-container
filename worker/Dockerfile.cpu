@@ -11,7 +11,8 @@ RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp .
 RUN cmake -B build \
       -DLLAMA_RPC=ON \
       -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build --config Release --target llama-rpc-server -j$(nproc)
+    && cmake --build build --config Release \
+             --target llama-rpc-server --target llama-server -j$(nproc)
 
 # ── Stage 2: Runtime image ────────────────────────────────────────────────────
 FROM ubuntu:22.04 AS runtime
@@ -21,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/build/bin/llama-rpc-server /usr/local/bin/llama-rpc-server
+COPY --from=builder /build/build/bin/llama-server     /usr/local/bin/llama-server
 
 WORKDIR /app
 COPY sidecar/requirements.txt .
@@ -33,7 +35,12 @@ ENV ADVERTISE_IP=""
 ENV NODE_NAME=""
 ENV GPU_LAYERS=0
 ENV ORCHESTRATOR_HOST=""
+ENV ENABLE_INFERENCE=false
+ENV MODEL_PATH=""
+ENV LLAMA_SERVER_PORT=8080
+ENV CONTEXT_SIZE=4096
+ENV PARALLEL=4
 
-EXPOSE 50052 8765
+EXPOSE 50052 8080 8765
 
 CMD ["python3", "main.py"]
