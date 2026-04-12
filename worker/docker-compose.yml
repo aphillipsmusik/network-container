@@ -1,0 +1,50 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Worker node – run this on every machine that will contribute compute / RAM.
+#
+# Required env vars (set in .env or export before running):
+#   ADVERTISE_IP   – the IP other nodes on the network can reach this machine on
+#   NODE_NAME      – unique name for this node (e.g. "worker-macbook")
+#   ORCHESTRATOR_HOST – IP of the orchestrator (for optional REST registration)
+#
+# Usage (CPU):
+#   cp ../.env.example .env && nano .env
+#   docker compose -f docker-compose.yml up -d
+#
+# Usage (GPU):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  rpc-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: llama-rpc-worker:cpu
+    container_name: llama-rpc-worker
+    restart: unless-stopped
+
+    # Host networking is required so that mDNS multicast (224.0.0.251:5353)
+    # is not blocked by Docker's bridge NAT.
+    network_mode: host
+
+    environment:
+      RPC_PORT: "${RPC_PORT:-50052}"
+      ADVERTISE_IP: "${ADVERTISE_IP}"
+      NODE_NAME: "${NODE_NAME:-worker-$(hostname)}"
+      GPU_LAYERS: "${GPU_LAYERS:-0}"
+      ORCHESTRATOR_HOST: "${ORCHESTRATOR_HOST:-}"
+
+    volumes:
+      # Optional: bind-mount a local model dir so the worker can benchmark
+      - "${MODEL_DIR:-/tmp/models}:/models:ro"
+
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import socket; s=socket.socket(); s.connect(('127.0.0.1', int(__import__('os').environ.get('RPC_PORT','50052')))); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# GPU override – merge with: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
