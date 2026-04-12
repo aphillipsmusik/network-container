@@ -1,0 +1,54 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Orchestrator node – run this on ONE machine per cluster.
+#
+# This node:
+#   • Discovers worker nodes automatically via mDNS
+#   • Launches llama-server with --rpc flags pointing at all workers
+#   • Exposes an OpenAI-compatible API on port 8080
+#   • Exposes a cluster management API on port 8888
+#
+# Required env vars (set in .env or export before running):
+#   MODEL_PATH  – absolute path to the GGUF model file on this machine
+#
+# Usage (CPU):
+#   cp ../.env.example .env && nano .env
+#   docker compose up -d
+#
+# Usage (GPU):
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: llama-orchestrator:cpu
+    container_name: llama-orchestrator
+    restart: unless-stopped
+
+    # Host networking required for mDNS multicast discovery
+    network_mode: host
+
+    environment:
+      MGMT_PORT: "${MGMT_PORT:-8888}"
+      LLAMA_SERVER_PORT: "${LLAMA_SERVER_PORT:-8080}"
+      MODEL_PATH: "${MODEL_PATH}"
+      GPU_LAYERS: "${GPU_LAYERS:-0}"
+      CONTEXT_SIZE: "${CONTEXT_SIZE:-4096}"
+      PARALLEL: "${PARALLEL:-4}"
+      WORKER_STALE_TIMEOUT: "${WORKER_STALE_TIMEOUT:-90}"
+      DISCOVERY_TIMEOUT: "${DISCOVERY_TIMEOUT:-10}"
+
+    volumes:
+      # Mount the directory that contains the model GGUF file
+      - "${MODEL_DIR:-/tmp/models}:/models:ro"
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:${MGMT_PORT:-8888}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s

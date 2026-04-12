@@ -1,0 +1,40 @@
+# ── Stage 1: Build llama.cpp with CUDA + RPC support ─────────────────────────
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp .
+
+RUN cmake -B build \
+      -DLLAMA_RPC=ON \
+      -DGGML_CUDA=ON \
+      -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release --target llama-rpc-server -j$(nproc)
+
+# ── Stage 2: Runtime image ────────────────────────────────────────────────────
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/build/bin/llama-rpc-server /usr/local/bin/llama-rpc-server
+
+WORKDIR /app
+COPY sidecar/requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY sidecar/ .
+
+ENV RPC_PORT=50052
+ENV ADVERTISE_IP=""
+ENV NODE_NAME=""
+ENV GPU_LAYERS=99
+ENV ORCHESTRATOR_HOST=""
+
+EXPOSE 50052 8765
+
+CMD ["python3", "main.py"]
