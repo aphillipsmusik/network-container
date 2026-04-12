@@ -24,3 +24,13 @@ ORCHESTRATOR_HOST: str = os.environ.get("ORCHESTRATOR_HOST", "")
 ORCHESTRATOR_PORT: int = int(os.environ.get("ORCHESTRATOR_PORT", "8888"))
 HEARTBEAT_INTERVAL: int = int(os.environ.get("HEARTBEAT_INTERVAL", "60"))
 LLAMA_RPC_BIN: str = os.environ.get("LLAMA_RPC_BIN", "llama-rpc-server")
+
+# ── Full-node / inference settings ────────────────────────────────────────────
+# Set ENABLE_INFERENCE=true to also run llama-server on this worker node,
+# giving it direct access to the model via the full cluster as RPC backends.
+ENABLE_INFERENCE: bool = os.environ.get("ENABLE_INFERENCE", "false").lower() == "true"
+MODEL_PATH: str = os.environ.get("MODEL_PATH", "")
+LLAMA_SERVER_PORT: int = int(os.environ.get("LLAMA_SERVER_PORT", "8080"))
+CONTEXT_SIZE: int = int(os.environ.get("CONTEXT_SIZE", "4096"))
+PARALLEL: int = int(os.environ.get("PARALLEL", "4"))
+LLAMA_SERVER_BIN: str = os.environ.get("LLAMA_SERVER_BIN", "llama-server")
