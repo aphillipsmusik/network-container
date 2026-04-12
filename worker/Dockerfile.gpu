@@ -12,7 +12,8 @@ RUN cmake -B build \
       -DLLAMA_RPC=ON \
       -DGGML_CUDA=ON \
       -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build --config Release --target llama-rpc-server -j$(nproc)
+    && cmake --build build --config Release \
+             --target llama-rpc-server --target llama-server -j$(nproc)
 
 # ── Stage 2: Runtime image ────────────────────────────────────────────────────
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
@@ -22,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/build/bin/llama-rpc-server /usr/local/bin/llama-rpc-server
+COPY --from=builder /build/build/bin/llama-server     /usr/local/bin/llama-server
 
 WORKDIR /app
 COPY sidecar/requirements.txt .
