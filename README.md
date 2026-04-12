@@ -7,6 +7,11 @@ wouldn't fit on any single machine.
 Built on [llama.cpp](https://github.com/ggerganov/llama.cpp)'s RPC backend,
 containerized with Docker, with automatic node discovery via mDNS.
 
+> **Governing principle**: No single node, person, or entity may control more
+> than 51% of a cluster's compute or routing. Orchestrators are auditable,
+> replaceable, and rotatable. Workers are always free to leave.
+> See [GOVERNANCE.md](GOVERNANCE.md).
+
 ```
           Your Network
     ┌─────────────────────────────────────────────────┐
