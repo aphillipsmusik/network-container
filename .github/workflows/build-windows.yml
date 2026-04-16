@@ -1,0 +1,190 @@
+name: Build Windows Installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/**"
+      - ".github/workflows/build-windows.yml"
+  workflow_dispatch:
+    inputs:
+      llama_version:
+        description: "llama.cpp release tag (e.g. b3400) – leave blank for latest"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write    # needed to create GitHub Releases
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python ───────────────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies (worker)
+        run: pip install -r windows/app/requirements.txt
+
+      - name: Install Python dependencies (orchestrator)
+        run: pip install -r windows/orchestrator/app/requirements.txt
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      # ── Download llama.cpp Windows binaries ──────────────────────────────────
+      - name: Resolve llama.cpp release tag
+        id: llama_tag
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.llama_version }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest \
+                  | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using llama.cpp $TAG"
+
+      - name: Download llama.cpp CPU binaries
+        shell: bash
+        run: |
+          TAG="${{ steps.llama_tag.outputs.tag }}"
+          URL="https://github.com/ggerganov/llama.cpp/releases/download/${TAG}/llama-${TAG}-bin-win-avx2-x64.zip"
+          echo "Downloading $URL"
+          curl -L -o llama-cpu.zip "$URL"
+          mkdir -p dist/bin
+          unzip -j llama-cpu.zip "*.exe" "*.dll" -d dist/bin/ || true
+          ls dist/bin/
+
+      - name: Verify required binaries exist
+        shell: bash
+        run: |
+          for f in "llama-rpc-server.exe" "llama-server.exe"; do
+            if [ ! -f "dist/bin/$f" ]; then
+              echo "WARNING: $f not found in release – checking alternate names"
+              ls dist/bin/*.exe || true
+            fi
+          done
+          # Rename if llama.cpp changed binary names
+          for alt in "rpc-server.exe" "server.exe"; do
+            if [ -f "dist/bin/$alt" ] && [ ! -f "dist/bin/llama-$alt" ]; then
+              cp "dist/bin/$alt" "dist/bin/llama-$alt"
+            fi
+          done
+
+      # ── PyInstaller – Worker ──────────────────────────────────────────────────
+      - name: Build LLMCluster.exe (worker) with PyInstaller
+        run: pyinstaller windows/build.spec --distpath dist --workpath build/pyinstaller-worker
+
+      - name: Verify LLMCluster.exe was created
+        run: |
+          if (!(Test-Path "dist\LLMCluster.exe")) {
+            Write-Error "PyInstaller did not produce LLMCluster.exe"
+            exit 1
+          }
+          Write-Host "LLMCluster.exe size: $((Get-Item 'dist\LLMCluster.exe').Length / 1MB) MB"
+
+      # ── PyInstaller – Orchestrator ────────────────────────────────────────────
+      - name: Build LLMClusterOrchestrator.exe with PyInstaller
+        run: pyinstaller windows/orchestrator/build.spec --distpath dist --workpath build/pyinstaller-orchestrator
+
+      - name: Verify LLMClusterOrchestrator.exe was created
+        run: |
+          if (!(Test-Path "dist\LLMClusterOrchestrator.exe")) {
+            Write-Error "PyInstaller did not produce LLMClusterOrchestrator.exe"
+            exit 1
+          }
+          Write-Host "LLMClusterOrchestrator.exe size: $((Get-Item 'dist\LLMClusterOrchestrator.exe').Length / 1MB) MB"
+
+      # ── Inno Setup ────────────────────────────────────────────────────────────
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build worker installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer\setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify worker installer was created
+        run: |
+          $installer = Get-Item "dist\LLMCluster-Setup.exe"
+          Write-Host "Worker installer: $($installer.Name)  ($([math]::Round($installer.Length/1MB,1)) MB)"
+
+      - name: Build orchestrator installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\orchestrator\installer\setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify orchestrator installer was created
+        run: |
+          $installer = Get-Item "dist\LLMCluster-Orchestrator-Setup.exe"
+          Write-Host "Orchestrator installer: $($installer.Name)  ($([math]::Round($installer.Length/1MB,1)) MB)"
+
+      # ── Upload artifacts ──────────────────────────────────────────────────────
+      - name: Upload worker installer as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMCluster-Setup-Windows
+          path: dist/LLMCluster-Setup.exe
+          retention-days: 30
+
+      - name: Upload orchestrator installer as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMCluster-Orchestrator-Setup-Windows
+          path: dist/LLMCluster-Orchestrator-Setup.exe
+          retention-days: 30
+
+      # ── Create GitHub Release (on main branch only) ───────────────────────────
+      - name: Get short SHA
+        id: sha
+        shell: bash
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "windows-${{ steps.sha.outputs.short }}"
+          name: "Windows Installers (llama.cpp ${{ steps.llama_tag.outputs.tag }})"
+          body: |
+            ## LLM Cluster – Windows Installers
+
+            | Installer | Role | Description |
+            |-----------|------|-------------|
+            | `LLMCluster-Setup.exe` | **Worker** | Contributes CPU/GPU compute to the cluster |
+            | `LLMCluster-Orchestrator-Setup.exe` | **Orchestrator** | Holds the model, manages inference across workers |
+
+            ### llama.cpp version
+            `${{ steps.llama_tag.outputs.tag }}` (AVX2, CPU build)
+
+            ### What's included in both installers
+            - Setup wizard with role-specific configuration
+            - llama.cpp binaries pre-bundled
+            - Automatic Windows Firewall rules (ports 8080, 8888, 5353 UDP)
+            - System tray icon with status + quick actions
+            - Optional Windows auto-start
+
+            ### Requirements
+            - Windows 10 / 11 (64-bit)
+            - 8 GB RAM minimum (32 GB+ recommended for large models)
+            - Same WiFi / LAN network for all nodes
+
+            ### Quick start
+            1. **Workers**: run `LLMCluster-Setup.exe` on each machine contributing compute
+            2. **Orchestrator**: run `LLMCluster-Orchestrator-Setup.exe` on the machine with the GGUF model
+            3. Workers auto-discover the orchestrator via mDNS — no IP config needed
+
+            > Built from commit ${{ github.sha }}
+          files: |
+            dist/LLMCluster-Setup.exe
+            dist/LLMCluster-Orchestrator-Setup.exe
+          draft: false
+          prerelease: false
